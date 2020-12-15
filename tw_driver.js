@@ -19,6 +19,7 @@ class TwPacket {
 
 class TwResp {
     constructor() {
+        this.result = StatusCode.RESULT_UNDEFINED;
         this.packet = new TwPacket();
         this.numTries = 0;
         this.timeElapsed = 0;
@@ -29,11 +30,14 @@ const StatusCode = {
     RESULT_OKAY: 0,
     RESULT_COMMS_FAIL: 1,
     RESULT_FAIL_INVALID_REQUEST: 2,
-    RESULT_FAIL_UNSUPPORTED_REQUEST: 3
+    RESULT_FAIL_UNSUPPORTED_REQUEST: 3,
+    RESULT_UNDEFINED: 4
 }
 
 
 // variables
+
+const BIT0 = 0x00000001;
 
 const BUFFER_SIZE = 100;
 const CRC_POLYNOMIAL = 0xa001; // Modbus
@@ -63,10 +67,10 @@ const MAX_COMMANDTIMEOUT_100MS = 100;
 
 const SerialPort = require('serialport')
 const Readline = require('@serialport/parser-readline')
-var port = new SerialPort('/dev/ttyS6', { baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 })
 
-var __rxData = new Array(100);
-var __txData = new Array(100);
+
+var __rxData = new Uint8Array(100);
+var __txData = new Uint8Array(100);
 
 let twResp = new TwResp();
 
@@ -77,6 +81,28 @@ function getTickCount() {
     return Date.now();
 }
 
+function generateCRC(buffer, size) {
+
+    let wCRC = 0xffff;
+    let byByte, byLoop;
+
+    //for (byByte = 0; byByte < (SIZE_COMMSCOMMAND_BYTES-2); byByte++)
+    for (byByte = 0; byByte < (size - 2); byByte++) {
+        wCRC ^= buffer[byByte];
+        for (byLoop = 0; byLoop < 8; byLoop++) {
+            if (wCRC & BIT0) {
+                wCRC >>= 1;
+                wCRC ^= CRC_POLYNOMIAL;
+            }
+            else
+                wCRC >>= 1;
+        }
+    }
+    return wCRC;
+}
+
+
+
 function checkCRC(buffer, cmdSize) {
     /*
   Return:
@@ -85,11 +111,11 @@ function checkCRC(buffer, cmdSize) {
   */
     let wCRC;
 
-    wCRC = pabyBuffer[byCommandSize - 1]; // MSB
+    wCRC = buffer[cmdSize - 1]; // MSB
     wCRC = wCRC << 8;
-    wCRC += pabyBuffer[byCommandSize - 2]; // LSB
+    wCRC += buffer[cmdSize - 2]; // LSB
 
-    if (wCRC == generateCRC(pabyBuffer, byCommandSize)) {
+    if (wCRC == generateCRC(buffer, cmdSize)) {
         return 1;
     }
     else {
@@ -104,12 +130,12 @@ function tx(twPacket) {
     __rxData = new Array(100);
 
     // Prepare 2-wire command format
-    __txData[0] = addr;
-    __txData[1] = byCommand;
-    __txData[2] = byData1;
-    __txData[3] = byData2;
-    __txData[4] = byData3;
-    __txData[5] = byData4;
+    __txData[0] = twPacket.addr;
+    __txData[1] = twPacket.cmd;
+    __txData[2] = twPacket.d1;
+    __txData[3] = twPacket.d2;
+    __txData[4] = twPacket.d3;
+    __txData[5] = twPacket.d4;
     wData = generateCRC(__txData, SIZE_COMMSCOMMAND_BYTES);
     __txData[6] = wData & 0xff;
     __txData[7] = wData >> 8;
@@ -122,7 +148,7 @@ function tx(twPacket) {
         if (err) {
             return console.log("Error on write: ", err.message);
         }
-        console.log("message written");
+        // console.log("message written");
     });
 }
 
@@ -141,10 +167,32 @@ function rx(addr, byCommand, wWaitmS) {
     // will return either on timeout or when specified # bytes have been received
     // totalBytesRead = Serial1.readBytes(__rxData, byRxSize);
 
-    while (date.now() < endTime && recBuff.length < SIZE_COMMSCOMMAND_BYTES) {
-        recBuff = serialport.read(SIZE_COMMSCOMMAND_BYTES);
-        recBuff = recBuffer == null ? Buffer.alloc(1) : recBuffer;
+    const checkRxBuffer = () => {
+        recBuff = port.read(SIZE_COMMSCOMMAND_BYTES);
+        recBuff = this.recBuffer == null ? Buffer.alloc(1) : this.recBuffer;
     }
+
+    const pollCheckRxBuffer = () => {
+        checkRxBuffer();
+
+        if (Date.now() < endTime && recBuff.length < SIZE_COMMSCOMMAND_BYTES) {
+            setTimeout(() => {
+                pollCheckRxBuffer()
+            }, 10);
+        }
+    }
+
+    pollCheckRxBuffer();
+
+
+    // while (date.now() < endTime && recBuff.length < SIZE_COMMSCOMMAND_BYTES) {
+    //     recBuff = serialport.read(SIZE_COMMSCOMMAND_BYTES);
+    //     recBuff = recBuffer == null ? Buffer.alloc(1) : recBuffer;
+    // }
+
+
+
+
 
     if (recBuff.length == SIZE_COMMSCOMMAND_BYTES) {
 
@@ -181,173 +229,173 @@ function rx(addr, byCommand, wWaitmS) {
 var driver = {
 
     init: function () {
-        // port = new SerialPort('/dev/ttyS6', { baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
-        console.log("hello");
+        port = new SerialPort('/dev/ttyS6', { baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
     },
 
 
     // returns a promise 
-    // write: function (twPacket, numTries, waitMs) {
+    write: function (twPacket, numTries, waitMs) {
+        return new Promise(function (resolve, reject) {
 
+            let dwTicks, dwTimeout;
+            let byRetries;
+            let byState = 0, byBusy;
+            let byResult;
 
-    //     let dwTicks, dwTimeout;
-    //     let byRetries;
-    //     let byState = 0, byBusy;
-    //     let byResult;
+            byRetries = numTries;
 
-    //     byRetries = numTries;
+            let startTime = Date.now();
 
-    //     let startTime = Date.now();
+            do {
 
-    //     do {
+                switch (byState) {
 
-    //         switch (byState) {
+                    default:
+                    case 0:
+                        {
 
-    //             default:
-    //             case 0:
-    //                 {
+                            dwTimeout = getTickCount() + waitMs;
+                            byBusy = 1;
+                            byResult = StatusCode.RESULT_COMMS_FAIL;
 
-    //                     dwTimeout = getTickCount() + waitMs;
-    //                     byBusy = 1;
-    //                     byResult = StatusCode.RESULT_COMMS_FAIL;
+                            tx(twPacket);
 
-    //                     tx(twPacket);
+                            byState = 1;
+                        }
+                        break;
 
-    //                     byState = 1;
-    //                 }
-    //                 break;
+                    // Wait for reply
+                    case 1:
+                        {
 
-    //             // Wait for reply
-    //             case 1:
-    //                 {
+                            // Tx Standard Command
+                            if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
+                                // HUB will reply immeadetely with Lengthy command. HUB send reply from sensor approx. 30mS later
+                                if (twPacket.cmd == __rxData[1]) {
+                                    byState = 100; // Passed
+                                }
 
-    //                     // Tx Standard Command
-    //                     if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
-    //                         // HUB will reply immeadetely with Lengthy command. HUB send reply from sensor approx. 30mS later
-    //                         if (twPacket.cmd == __rxData[1]) {
-    //                             byState = 100; // Passed
-    //                         }
+                                else {
+                                    if (P2COMMAND_READ_LASTCOMMAND == __rxData[1])
+                                        byState = 2; // Lengthly Command
 
-    //                         else {
-    //                             if (P2COMMAND_READ_LASTCOMMAND == __rxData[1])
-    //                                 byState = 2; // Lengthly Command
+                                    else
+                                        byState = 110; // Failed - Invalid
+                                }
+                            }
 
-    //                             else
-    //                                 byState = 110; // Failed - Invalid
-    //                         }
-    //                     }
+                            else {
+                                if ((checkCRC(__rxData, 8)) && (__rxData[0] == twPacket.addr))
+                                    byState = 110; // Failed - Invalid
+                                else
+                                    byState = 111; // Failed - Timeout
+                            }
+                        }
+                        break;
 
-    //                     else {
-    //                         if ((checkCRC(__rxData, 8)) && (__rxData[0] == twPacket.addr))
-    //                             byState = 110; // Failed - Invalid
-    //                         else
-    //                             byState = 111; // Failed - Timeout
-    //                     }
-    //                 }
-    //                 break;
+                    case 2:
+                        {
+                            dwTicks = getTickCount() + MAX_COMMANDTIMEOUT_25MS;
+                            byState = 3;
+                        }
+                        break;
 
-    //             case 2:
-    //                 {
-    //                     dwTicks = getTickCount() + MAX_COMMANDTIMEOUT_25MS;
-    //                     byState = 3;
-    //                 }
-    //                 break;
+                    // Wait
+                    case 3:
+                        {
+                            if (getTickCount() > dwTicks)
+                                byState = 4;
+                        }
+                        break;
 
-    //             // Wait
-    //             case 3:
-    //                 {
-    //                     if (getTickCount() > dwTicks)
-    //                         byState = 4;
-    //                 }
-    //                 break;
+                    // Tx
+                    case 4:
+                        {
+                            tx(twPacket.addr, P2COMMAND_READ_LASTCOMMAND, twPacket.cmd, 0, 0, 0);
 
-    //             // Tx
-    //             case 4:
-    //                 {
-    //                     tx(twPacket.addr, P2COMMAND_READ_LASTCOMMAND, twPacket.cmd, 0, 0, 0);
+                            byState = 5;
+                        }
+                        break;
 
-    //                     byState = 5;
-    //                 }
-    //                 break;
+                    // Rx
+                    case 5:
+                        {
 
-    //             // Rx
-    //             case 5:
-    //                 {
+                            if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
+                                if (twPacket.cmd == __rxData[1])
+                                    byState = 100; // Passed
+                                else {
+                                    if (P2COMMANDSTATUS_BUSY == __rxData[2])
+                                        byState = 2; // Busy
+                                }
+                            }
+                            else
+                                byState = 2; // Re Send
 
-    //                     if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
-    //                         if (twPacket.cmd == __rxData[1])
-    //                             byState = 100; // Passed
-    //                         else {
-    //                             if (P2COMMANDSTATUS_BUSY == __rxData[2])
-    //                                 byState = 2; // Busy
-    //                         }
-    //                     }
-    //                     else
-    //                         byState = 2; // Re Send
+                            // Timeout
+                            if (getTickCount() > dwTimeout)
+                                byState = 111; // Timeout
+                        }
+                        break;
 
-    //                     // Timeout
-    //                     if (getTickCount() > dwTimeout)
-    //                         byState = 111; // Timeout
-    //                 }
-    //                 break;
+                    // Passed
+                    case 100:
+                        {
+                            byResult = StatusCode.RESULT_OKAY;
+                            //rxStatus = P2COMMANDSTATUS_PASSED;
+                            byState = 200;
+                        }
+                        break;
 
-    //             // Passed
-    //             case 100:
-    //                 {
-    //                     byResult = StatusCode.RESULT_OKAY;
-    //                     //rxStatus = P2COMMANDSTATUS_PASSED;
-    //                     byState = 200;
-    //                 }
-    //                 break;
+                    // Failed - Not Supported
+                    case 110:
+                        {
+                            byResult = StatusCode.RESULT_COMMS_FAIL;
+                            //rxStatus = P2COMMANDSTATUS_INVALID;
+                            byState = 200;
+                        }
+                        break;
 
-    //             // Failed - Not Supported
-    //             case 110:
-    //                 {
-    //                     byResult = StatusCode.RESULT_COMMS_FAIL;
-    //                     //rxStatus = P2COMMANDSTATUS_INVALID;
-    //                     byState = 200;
-    //                 }
-    //                 break;
+                    // Failed -Timeout
+                    case 111:
+                        {
+                            if (byRetries) {
+                                byRetries--;
+                                byBusy = 1;
+                                byState = 0; // Restart
+                            }
 
-    //             // Failed -Timeout
-    //             case 111:
-    //                 {
-    //                     if (byRetries) {
-    //                         byRetries--;
-    //                         byBusy = 1;
-    //                         byState = 0; // Restart
-    //                     }
+                            else {
+                                byResult = StatusCode.RESULT_COMMS_FAIL;
+                                byState = 200;
+                            }
+                        }
+                        break;
 
-    //                     else {
-    //                         byResult = StatusCode.RESULT_COMMS_FAIL;
-    //                         byState = 200;
-    //                     }
-    //                 }
-    //                 break;
+                    // End
+                    case 200:
+                        {
+                            twResp.packet.addr = __rxData[0];
+                            twResp.packet.cmd = __rxData[1];
+                            twResp.packet.data1 = __rxData[2];
+                            twResp.packet.data2 = __rxData[3];
+                            twResp.packet.data3 = __rxData[4];
+                            twResp.packet.data4 = __rxData[5];
 
-    //             // End
-    //             case 200:
-    //                 {
+                            byBusy = 0;
+                        }
+                        break;
+                };
 
-    //                     twResp.packet.addr = __rxData[0];
-    //                     twResp.packet.cmd = __rxData[1];
-    //                     twResp.packet.data1 = __rxData[2];
-    //                     twResp.packet.data2 = __rxData[3];
-    //                     twResp.packet.data3 = __rxData[4];
-    //                     twResp.packet.data4 = __rxData[5];
+            } while (byBusy);
 
-    //                     byBusy = 0;
-    //                 }
-    //                 break;
-    //         };
+            twResp.result = byResult;
+            twResp.numTries = numTries - byRetries;
+            twResp.timeElapsed = Date.now() - startTime;
 
-    //     } while (byBusy);
-
-    //     twResp.numTries = byTries - byRetries;
-    //     twResp.timeElapsed = Date.now() - startTime;
-
-    //     return byResult;
-    // }
+            resolve(twResp);
+        });
+    }
 
 
 
@@ -360,7 +408,9 @@ function foo() {
 
 
 
-exports.foo = foo;
-
-
+// exports.foo = foo;
 exports.driver = driver;
+
+exports.TwResp = TwResp;
+exports.TwPacket = TwPacket;
+exports.StatusCode = StatusCode;
