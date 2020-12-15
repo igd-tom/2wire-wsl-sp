@@ -127,7 +127,7 @@ function tx(twPacket) {
     let wData;
 
     //Clear Rx Data
-    __rxData = new Array(100);
+    __rxData = new Uint8Array(100);
 
     // Prepare 2-wire command format
     __txData[0] = twPacket.addr;
@@ -153,69 +153,44 @@ function tx(twPacket) {
 }
 
 
-function rx(addr, byCommand, wWaitmS) {
+async function rx(addr, byCommand, wWaitmS) {
 
-    let byReturn = 0;
-    let recBuff = Buffer.alloc(1);
+    return new Promise(function (res, rej) {
 
-    let endTime = Date.now() + wWaitmS;
+        let endTime = Date.now() + wWaitmS;
 
+        let id = setInterval(function () {
+            let twRes = port.read(8);
+            if (twRes != null) {
+                clearInterval(id);
 
-    // sets serial read timeout
-    // Serial1.setTimeout(wWaitmS);
+                __rxData[0] = twRes[0];
+                __rxData[1] = twRes[1];
+                __rxData[2] = twRes[2];
+                __rxData[3] = twRes[3];
+                __rxData[4] = twRes[4];
+                __rxData[5] = twRes[5];
+                __rxData[6] = twRes[6];
+                __rxData[7] = twRes[7];
 
-    // will return either on timeout or when specified # bytes have been received
-    // totalBytesRead = Serial1.readBytes(__rxData, byRxSize);
+                if ((checkCRC(__rxData, SIZE_COMMSCOMMAND_BYTES)) && (__rxData[0] == addr) &&
+                    ((__rxData[1] == byCommand) || (__rxData[1] == P2COMMAND_READ_LASTCOMMAND))) {
+                    res(1);
+                }
 
-    const checkRxBuffer = () => {
-        recBuff = port.read(SIZE_COMMSCOMMAND_BYTES);
-        recBuff = this.recBuffer == null ? Buffer.alloc(1) : this.recBuffer;
-    }
+                else {
+                    console.log("Error invalid tw resp");
+                    res(0);
+                }
+            }
 
-    const pollCheckRxBuffer = () => {
-        checkRxBuffer();
-
-        if (Date.now() < endTime && recBuff.length < SIZE_COMMSCOMMAND_BYTES) {
-            setTimeout(() => {
-                pollCheckRxBuffer()
-            }, 10);
-        }
-    }
-
-    pollCheckRxBuffer();
-
-
-    // while (date.now() < endTime && recBuff.length < SIZE_COMMSCOMMAND_BYTES) {
-    //     recBuff = serialport.read(SIZE_COMMSCOMMAND_BYTES);
-    //     recBuff = recBuffer == null ? Buffer.alloc(1) : recBuffer;
-    // }
-
-
-
-
-
-    if (recBuff.length == SIZE_COMMSCOMMAND_BYTES) {
-
-        __rxData[0] = recBuff.slice(0, 1);
-        __rxData[1] = recBuff.slice(1, 2);
-        __rxData[2] = recBuff.slice(2, 3);
-        __rxData[3] = recBuff.slice(3, 4);
-        __rxData[4] = recBuff.slice(4, 5);
-        __rxData[5] = recBuff.slice(5, 6);
-        __rxData[6] = recBuff.slice(6, 7);
-        __rxData[7] = recBuff.slice(7, 8);
-
-
-        if ((checkCRC(__rxData, SIZE_COMMSCOMMAND_BYTES)) && (__rxData[0] == addr) &&
-            ((__rxData[1] == byCommand) || (__rxData[1] == P2COMMAND_READ_LASTCOMMAND))) {
-            byReturn = 1;
-        }
-    }
-
-
-
-
-    return byReturn;
+            if (Date.now() > endTime) {
+                clearInterval(id);
+                res(0);
+            }
+        }, 5);
+    })
+    // 
 }
 
 
@@ -235,7 +210,7 @@ var driver = {
 
     // returns a promise 
     write: function (twPacket, numTries, waitMs) {
-        return new Promise(function (resolve, reject) {
+        return new Promise(async function (resolve, reject) {
 
             let dwTicks, dwTimeout;
             let byRetries;
@@ -269,7 +244,7 @@ var driver = {
                         {
 
                             // Tx Standard Command
-                            if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
+                            if (await rx(twPacket.addr, twPacket.cmd, waitMs)) {
                                 // HUB will reply immeadetely with Lengthy command. HUB send reply from sensor approx. 30mS later
                                 if (twPacket.cmd == __rxData[1]) {
                                     byState = 100; // Passed
@@ -321,7 +296,7 @@ var driver = {
                     case 5:
                         {
 
-                            if (rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
+                            if (await rx(twPacket.addr, twPacket.cmd, MAX_COMMANDTIMEOUT_50MS)) {
                                 if (twPacket.cmd == __rxData[1])
                                     byState = 100; // Passed
                                 else {
@@ -377,10 +352,10 @@ var driver = {
                         {
                             twResp.packet.addr = __rxData[0];
                             twResp.packet.cmd = __rxData[1];
-                            twResp.packet.data1 = __rxData[2];
-                            twResp.packet.data2 = __rxData[3];
-                            twResp.packet.data3 = __rxData[4];
-                            twResp.packet.data4 = __rxData[5];
+                            twResp.packet.d1 = __rxData[2];
+                            twResp.packet.d2 = __rxData[3];
+                            twResp.packet.d3 = __rxData[4];
+                            twResp.packet.d4 = __rxData[5];
 
                             byBusy = 0;
                         }
