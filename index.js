@@ -2,33 +2,6 @@
 
 
 
-
-
-// const tw_driver = require('./tw_driver');
-
-
-// let pkt = new tw_driver.TwPacket();
-
-// pkt.addr = 255;
-// pkt.cmd = 21;
-// pkt.d1 = 3;
-// pkt.d2 = 0;
-// pkt.d3 = 0;
-// pkt.d4 = 0;
-
-// tw_driver.driver.init();
-
-
-// tw_driver.driver.write(pkt, 2, 500).then(
-//     res => {
-//         console.log(res)
-//     },
-
-//     err => {
-//         console.log(err)
-//     }
-// )
-
 const tw_driver = require('./tw_driver');
 var WebSocketServer = require('websocket').server;
 var http = require('http');
@@ -42,7 +15,7 @@ var server = http.createServer(function (request, response) {
 });
 
 
-server.listen(8080, function () {
+server.listen(8080, '192.168.4.41', function () {
     console.log((new Date()) + ' Server is listening on port 8080');
 });
 
@@ -60,6 +33,7 @@ wsServer.on('request', function (request) {
     connection.on('message', function (message) {
         try {
             let reqJson = JSON.parse(message.utf8Data)
+            let id = reqJson.id;
             let maxTries = reqJson.maxTries;
             let timeout = reqJson.timeout;
             let pkt = new tw_driver.TwPacket();
@@ -71,6 +45,7 @@ wsServer.on('request', function (request) {
             pkt.d4 = reqJson.d4;
 
             let respData = {
+                id: 0,
                 twResCode: 0,
                 numTries: 0,
                 elapsedTime: 0,
@@ -87,6 +62,7 @@ wsServer.on('request', function (request) {
 
             tw_driver.driver.write(pkt, maxTries, timeout).then(
                 res => {
+                    respData.id = id;
                     respData.twResCode = res.result;
                     respData.numTries = res.numTries;
                     respData.elapsedTime = res.timeElapsed;
