@@ -75,6 +75,9 @@ var __txData = new Uint8Array(100);
 let twResp = new TwResp();
 
 
+var port;
+
+
 // private functions
 
 function getTickCount() {
@@ -204,7 +207,7 @@ async function rx(addr, byCommand, wWaitmS) {
 var driver = {
 
     init: function () {
-        port = new SerialPort('/dev/ttyS8', { baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
+        port = new SerialPort('/dev/ttyS6', { baudRate: 115200, dataBits: 8, parity: 'none', stopBits: 1 });
     },
 
 

@@ -4,18 +4,25 @@
 
 const tw_driver = require('./tw_driver');
 var WebSocketServer = require('websocket').server;
-var http = require('http');
+const fs = require('fs');
+const https = require('https');
+
+
+
 
 tw_driver.driver.init();
 
-var server = http.createServer(function (request, response) {
+var server = https.createServer({
+    key: fs.readFileSync('server.key'),
+    cert: fs.readFileSync('server.cert')
+}, function (request, response) {
     console.log((new Date()) + ' Received request for ' + request.url);
     response.writeHead(404);
     response.end();
 });
 
 
-server.listen(8080, '192.168.4.41', function () {
+server.listen(8080, '0.0.0.0', function () {
     console.log((new Date()) + ' Server is listening on port 8080');
 });
 
