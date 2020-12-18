@@ -114,14 +114,15 @@ function checkCRC(buffer, cmdSize) {
   */
     let wCRC;
 
-    wCRC = buffer[cmdSize - 1]; // MSB
+    wCRC = buffer[7]; // MSB
     wCRC = wCRC << 8;
-    wCRC += buffer[cmdSize - 2]; // LSB
+    wCRC += buffer[6]; // LSB
 
-    if (wCRC == generateCRC(buffer, cmdSize)) {
+    if (wCRC == generateCRC(buffer, 8)) {
         return 1;
     }
     else {
+        console.log("crc fail")
         return 0;
     }
 }
@@ -213,7 +214,7 @@ var driver = {
 
     // returns a promise 
     write: function (twPacket, numTries, waitMs) {
-        return new Promise(async function (resolve, reject) {
+        return new Promise(async (resolve, reject) => {
 
             let dwTicks, dwTimeout;
             let byRetries;
@@ -224,7 +225,8 @@ var driver = {
 
             let startTime = Date.now();
 
-            do {
+
+            let loop = async () => {
 
                 switch (byState) {
 
@@ -265,6 +267,11 @@ var driver = {
                             else {
                                 if ((checkCRC(__rxData, 8)) && (__rxData[0] == twPacket.addr))
                                     byState = 110; // Failed - Invalid
+
+                                if (__rxData[0] == twPacket.addr) {
+                                    console.log("rxData[0]: ", __rxData[0]);
+                                    console.log("twPacket.addr: ", twPacket.addr);
+                                }
                                 else
                                     byState = 111; // Failed - Timeout
                             }
@@ -328,19 +335,43 @@ var driver = {
                     // Failed - Not Supported
                     case 110:
                         {
-                            byResult = StatusCode.RESULT_COMMS_FAIL;
+
+
+
+                            if (byRetries) {
+                                byRetries--;
+                                byBusy = 1;
+                                byState = 0; // Restart
+                                setTimeout(loop, 100);
+                            }
+
+                            else {
+                                byResult = StatusCode.RESULT_COMMS_FAIL;
+                                byState = 200;
+                            }
+
+
+
+
+
+                            console.log("not supported")
+
+                            //byResult = StatusCode.RESULT_COMMS_FAIL;
                             //rxStatus = P2COMMANDSTATUS_INVALID;
-                            byState = 200;
+                            // byState = 200;
                         }
                         break;
 
                     // Failed -Timeout
                     case 111:
                         {
+                            console.log("timeout")
+
                             if (byRetries) {
                                 byRetries--;
                                 byBusy = 1;
                                 byState = 0; // Restart
+                                setTimeout(loop, 100);
                             }
 
                             else {
@@ -365,13 +396,25 @@ var driver = {
                         break;
                 };
 
-            } while (byBusy);
 
-            twResp.result = byResult;
-            twResp.numTries = numTries - byRetries;
-            twResp.timeElapsed = Date.now() - startTime;
 
-            resolve(twResp);
+                if (byBusy == 0) {
+
+                    twResp.result = byResult;
+                    twResp.numTries = numTries - byRetries;
+                    twResp.timeElapsed = Date.now() - startTime;
+
+                    resolve(twResp);
+                }
+
+                else {
+                    setTimeout(loop, 1);
+                }
+            }
+
+
+            setTimeout(loop, 1);
+
         });
     }
 
